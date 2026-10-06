@@ -182,6 +182,39 @@ def undo_last():
     print(f"\n{Color.GREEN}✓ Reverted {reverted} file(s) successfully.{Color.RESET}")
 
 
+def clean_empty(target_path, dry_run=False):
+    """Remove empty directories left behind by organize/undo."""
+    target_dir = Path(target_path).resolve()
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        print(f"{Color.RED}Error: Directory '{target_path}' does not exist!{Color.RESET}")
+        return
+
+    print(f"\n{Color.BOLD}{Color.CYAN}[AutoSort] — Clean Empty Folders{Color.RESET}")
+    print(f"Target Directory: {Color.YELLOW}{target_dir}{Color.RESET}")
+    if dry_run:
+        print(f"{Color.YELLOW}⚡ DRY RUN MODE ACTIVE (No folders will be removed){Color.RESET}\n")
+
+    removed = 0
+    # Walk bottom-up so nested empty dirs are caught after their children.
+    for dirpath, dirnames, _filenames in os.walk(str(target_dir), topdown=False):
+        d = Path(dirpath)
+        if d == target_dir:
+            continue
+        try:
+            if not any(d.iterdir()):
+                if dry_run:
+                    print(f" {Color.BLUE}[WOULD REMOVE]{Color.RESET} {d.relative_to(target_dir)}/")
+                else:
+                    d.rmdir()
+                    print(f" {Color.GREEN}[REMOVED]{Color.RESET} {d.relative_to(target_dir)}/")
+                removed += 1
+        except OSError:
+            pass
+
+    print(f"\n{Color.GREEN}✓ Removed {removed} empty folder(s).{Color.RESET}")
+
+
 def watch(target_path, dry_run=False, interval=5, sort_by="category"):
     """Watch a folder and auto-organize whenever new files appear."""
     target_dir = Path(target_path).resolve()
@@ -241,6 +274,11 @@ def main():
         help="Undo the last organize session"
     )
     parser.add_argument(
+        "--clean-empty",
+        action="store_true",
+        help="Remove empty category/date folders left behind (safe with --dry-run)"
+    )
+    parser.add_argument(
         "--watch",
         action="store_true",
         help="Continuously watch the folder and auto-organize new files"
@@ -263,6 +301,8 @@ def main():
 
     if args.undo:
         undo_last()
+    elif args.clean_empty:
+        clean_empty(args.path, dry_run=args.dry_run)
     elif args.watch:
         try:
             watch(args.path, dry_run=args.dry_run, interval=args.interval, sort_by=args.sort_by)
