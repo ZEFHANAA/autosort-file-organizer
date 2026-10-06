@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import shutil
 import json
 import argparse
@@ -62,10 +63,10 @@ def save_history(history_data):
 def organize(target_path, dry_run=False):
     """Main organization logic."""
     target_dir = Path(target_path).resolve()
-    
+
     if not target_dir.exists() or not target_dir.is_dir():
         print(f"{Color.RED}Error: Directory '{target_path}' does not exist!{Color.RESET}")
-        return
+        return 0
 
     print(f"\n{Color.BOLD}{Color.CYAN}[AutoSort] — Smart File Organizer{Color.RESET}")
     print(f"Target Directory: {Color.YELLOW}{target_dir}{Color.RESET}")
@@ -153,6 +154,45 @@ def undo_last():
     save_history(all_history)
     print(f"\n{Color.GREEN}✓ Reverted {reverted} file(s) successfully.{Color.RESET}")
 
+
+def watch(target_path, dry_run=False, interval=5):
+    """Watch a folder and auto-organize whenever new files appear."""
+    target_dir = Path(target_path).resolve()
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        print(f"{Color.RED}Error: Directory '{target_path}' does not exist!{Color.RESET}")
+        return
+
+    print(f"{Color.BOLD}{Color.CYAN}AutoSort Watch Mode{Color.RESET}")
+    print(f"Watching: {Color.YELLOW}{target_dir}{Color.RESET}")
+    print(f"Interval: {interval}s (press Ctrl+C to stop)")
+    if dry_run:
+        print(f"{Color.YELLOW}⚡ DRY RUN — no files will be moved{Color.RESET}")
+    print()
+
+    known = set(target_dir.iterdir())
+    print(f"{Color.CYAN}✓ Initialized. {len(known)} items already present.{Color.RESET}")
+
+    while True:
+        time.sleep(interval)
+        current = set(target_dir.iterdir())
+        new_items = current - known
+
+        if not new_items:
+            continue
+
+        new_files = [
+            p for p in new_items
+            if p.is_file() and p.name not in IGNORE_LIST and not p.name.startswith(".")
+        ]
+        if new_files:
+            names = ", ".join(f.name for f in new_files)
+            print(f"{Color.BLUE}[DETECTED]{Color.RESET} {len(new_files)} new file(s): {names}")
+            organize(target_dir, dry_run=dry_run)
+
+        known = current
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AutoSort — Smart File Organizer for Downloads & Messy Folders"
@@ -173,11 +213,28 @@ def main():
         action="store_true",
         help="Undo the last organize session"
     )
+    parser.add_argument(
+        "--watch",
+        action="store_true",
+        help="Continuously watch the folder and auto-organize new files"
+    )
+    parser.add_argument(
+        "--interval",
+        type=int,
+        default=5,
+        metavar="SECONDS",
+        help="Polling interval for --watch mode (default: 5 seconds)"
+    )
 
     args = parser.parse_args()
 
     if args.undo:
         undo_last()
+    elif args.watch:
+        try:
+            watch(args.path, dry_run=args.dry_run, interval=args.interval)
+        except KeyboardInterrupt:
+            print(f"\n{Color.CYAN}✓ Watch stopped by user.{Color.RESET}")
     else:
         organize(args.path, dry_run=args.dry_run)
 
