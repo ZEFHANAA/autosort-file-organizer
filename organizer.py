@@ -35,6 +35,18 @@ def get_category_for_extension(ext):
             return category
     return FALLBACK_CATEGORY
 
+def human_size(num_bytes):
+    """Convert bytes to a human-readable string."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f}{unit}" if unit != "B" else f"{int(size)}B"
+        size /= 1024
+
+def get_date_subfolder(mtime_ts, fmt="%Y-%m"):
+    """Return a date subfolder name from a modification timestamp."""
+    return datetime.fromtimestamp(mtime_ts).strftime(fmt)
+
 def get_unique_path(destination_dir, filename):
     """Ensure unique destination path to avoid overwriting existing files."""
     name, ext = os.path.splitext(filename)
@@ -60,7 +72,7 @@ def save_history(history_data):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history_data, f, indent=2)
 
-def organize(target_path, dry_run=False):
+def organize(target_path, dry_run=False, sort_by="category"):
     """Main organization logic."""
     target_dir = Path(target_path).resolve()
 
@@ -70,6 +82,7 @@ def organize(target_path, dry_run=False):
 
     print(f"\n{Color.BOLD}{Color.CYAN}[AutoSort] — Smart File Organizer{Color.RESET}")
     print(f"Target Directory: {Color.YELLOW}{target_dir}{Color.RESET}")
+    print(f"Sort Mode      : {sort_by}")
     if dry_run:
         print(f"{Color.YELLOW}⚡ DRY RUN MODE ACTIVE (No files will actually be moved){Color.RESET}\n")
 
@@ -77,6 +90,7 @@ def organize(target_path, dry_run=False):
     skipped_count = 0
     history = []
     category_summary = {}
+    total_bytes = 0
 
     for item in target_dir.iterdir():
         # Ignore subdirectories and items in IGNORE_LIST
@@ -84,25 +98,35 @@ def organize(target_path, dry_run=False):
             skipped_count += 1
             continue
 
-        category = get_category_for_extension(item.suffix)
-        category_dir = target_dir / category
-        destination_path = get_unique_path(category_dir, item.name)
+        if sort_by == "date":
+            rel_destination = get_date_subfolder(item.stat().st_mtime)
+            destination_dir = target_dir / rel_destination
+        else:
+            category = get_category_for_extension(item.suffix)
+            rel_destination = category
+            destination_dir = target_dir / category
 
-        category_summary[category] = category_summary.get(category, 0) + 1
+        destination_path = get_unique_path(destination_dir, item.name)
+
+        category_summary[rel_destination] = category_summary.get(rel_destination, 0) + 1
+        try:
+            total_bytes += item.stat().st_size
+        except OSError:
+            pass
 
         if dry_run:
-            print(f" {Color.BLUE}[WOULD MOVE]{Color.RESET} {item.name} -> {category}/{destination_path.name}")
+            print(f" {Color.BLUE}[WOULD MOVE]{Color.RESET} {item.name} -> {rel_destination}/{destination_path.name}")
         else:
-            category_dir.mkdir(exist_ok=True)
+            destination_dir.mkdir(parents=True, exist_ok=True)
             shutil.move(str(item), str(destination_path))
-            print(f" {Color.GREEN}[MOVED]{Color.RESET} {item.name} -> {category}/{destination_path.name}")
-            
+            print(f" {Color.GREEN}[MOVED]{Color.RESET} {item.name} -> {rel_destination}/{destination_path.name}")
+
             history.append({
                 "original": str(item),
                 "moved_to": str(destination_path),
                 "timestamp": datetime.now().isoformat()
             })
-        
+
         moved_count += 1
 
     # Print Summary
@@ -110,7 +134,9 @@ def organize(target_path, dry_run=False):
     print(f"Total Processed : {moved_count + skipped_count}")
     print(f"Total Moved     : {Color.GREEN}{moved_count}{Color.RESET}")
     print(f"Total Skipped   : {skipped_count}")
-    
+    if moved_count:
+        print(f"Total Size      : {human_size(total_bytes)}")
+
     if category_summary:
         print(f"\n{Color.BOLD}Category Breakdown:{Color.RESET}")
         for cat, cnt in category_summary.items():
@@ -121,6 +147,7 @@ def organize(target_path, dry_run=False):
         all_history.append({
             "session_date": datetime.now().isoformat(),
             "target_dir": str(target_dir),
+            "sort_by": sort_by,
             "moves": history
         })
         save_history(all_history)
@@ -155,7 +182,7 @@ def undo_last():
     print(f"\n{Color.GREEN}✓ Reverted {reverted} file(s) successfully.{Color.RESET}")
 
 
-def watch(target_path, dry_run=False, interval=5):
+def watch(target_path, dry_run=False, interval=5, sort_by="category"):
     """Watch a folder and auto-organize whenever new files appear."""
     target_dir = Path(target_path).resolve()
 
@@ -188,7 +215,7 @@ def watch(target_path, dry_run=False, interval=5):
         if new_files:
             names = ", ".join(f.name for f in new_files)
             print(f"{Color.BLUE}[DETECTED]{Color.RESET} {len(new_files)} new file(s): {names}")
-            organize(target_dir, dry_run=dry_run)
+            organize(target_dir, dry_run=dry_run, sort_by=sort_by)
 
         known = current
 
@@ -225,6 +252,12 @@ def main():
         metavar="SECONDS",
         help="Polling interval for --watch mode (default: 5 seconds)"
     )
+    parser.add_argument(
+        "--sort-by",
+        choices=["category", "date"],
+        default="category",
+        help="Organize by file category (default) or modification date (YYYY-MM)"
+    )
 
     args = parser.parse_args()
 
@@ -232,11 +265,11 @@ def main():
         undo_last()
     elif args.watch:
         try:
-            watch(args.path, dry_run=args.dry_run, interval=args.interval)
+            watch(args.path, dry_run=args.dry_run, interval=args.interval, sort_by=args.sort_by)
         except KeyboardInterrupt:
             print(f"\n{Color.CYAN}✓ Watch stopped by user.{Color.RESET}")
     else:
-        organize(args.path, dry_run=args.dry_run)
+        organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by)
 
 if __name__ == "__main__":
     main()
