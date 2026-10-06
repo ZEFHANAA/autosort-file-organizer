@@ -235,7 +235,12 @@ def watch(target_path, dry_run=False, interval=5, sort_by="category"):
 
     while True:
         time.sleep(interval)
-        current = set(target_dir.iterdir())
+        try:
+            current = set(target_dir.iterdir())
+        except FileNotFoundError:
+            print(f"\n{Color.RED}Error: Watched folder was removed: {target_dir}{Color.RESET}")
+            print(f"{Color.YELLOW}Stopping watch mode.{Color.RESET}")
+            return
         new_items = current - known
 
         if not new_items:
