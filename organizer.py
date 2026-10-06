@@ -18,6 +18,73 @@ from config import FILE_CATEGORIES, IGNORE_LIST, FALLBACK_CATEGORY
 
 HISTORY_FILE = "history.json"
 
+def load_custom_config(path):
+    """Load a user-supplied JSON config with custom categories.
+
+    Accepted shape (all keys optional, unknown keys ignored):
+        {
+          "categories": {"MyCategory": [".foo", ".bar"]},
+          "ignore": ["sample.txt"],
+          "fallback": "Misc"
+        }
+
+    Custom categories are merged on top of the defaults, so a small
+    config only needs to declare what it wants to add or override.
+    Returns (file_categories, ignore_list, fallback).
+    """
+    categories = {k: list(v) for k, v in FILE_CATEGORIES.items()}
+    ignore_list = list(IGNORE_LIST)
+    fallback = FALLBACK_CATEGORY
+
+    cfg_path = Path(path)
+    if not cfg_path.exists():
+        print(f"{Color.RED}Error: Config file not found: '{path}'{Color.RESET}")
+        sys.exit(2)
+
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"{Color.RED}Error: Config file is not valid JSON: {e}{Color.RESET}")
+        sys.exit(2)
+
+    if not isinstance(data, dict):
+        print(f"{Color.RED}Error: Config root must be a JSON object.{{Color.RESET}}")
+        sys.exit(2)
+
+    custom_categories = data.get("categories")
+    if custom_categories is not None:
+        if not isinstance(custom_categories, dict):
+            print(f"{Color.RED}Error: 'categories' must be an object of name -> extension list.{Color.RESET}")
+            sys.exit(2)
+        for name, extensions in custom_categories.items():
+            if not isinstance(extensions, list) or not all(
+                isinstance(x, str) for x in extensions
+            ):
+                print(f"{Color.RED}Error: Category '{name}' must map to a list of extension strings.{Color.RESET}")
+                sys.exit(2)
+            normalized = [
+                x if x.startswith(".") else f".{x}" for x in
+                (str(e).lower() for e in extensions)
+            ]
+            categories[str(name)] = normalized
+
+    custom_ignore = data.get("ignore")
+    if custom_ignore is not None:
+        if not isinstance(custom_ignore, list) or not all(isinstance(x, str) for x in custom_ignore):
+            print(f"{Color.RED}Error: 'ignore' must be a list of strings.{Color.RESET}")
+            sys.exit(2)
+        ignore_list.extend(custom_ignore)
+
+    custom_fallback = data.get("fallback")
+    if custom_fallback is not None:
+        if not isinstance(custom_fallback, str):
+            print(f"{Color.RED}Error: 'fallback' must be a string.{Color.RESET}")
+            sys.exit(2)
+        fallback = custom_fallback
+
+    return categories, ignore_list, fallback
+
 class Color:
     GREEN = "\033[92m"
     YELLOW = "\033[93m"
@@ -27,13 +94,23 @@ class Color:
     BOLD = "\033[1m"
     RESET = "\033[0m"
 
-def get_category_for_extension(ext):
+def custom_rules_used(categories, ignore_list, fallback):
+    """Check whether a loaded config differs from the built-in defaults."""
+    return (
+        categories is not FILE_CATEGORIES
+        or ignore_list is not IGNORE_LIST
+        or fallback != FALLBACK_CATEGORY
+    )
+
+def get_category_for_extension(ext, categories=None, fallback=None):
     """Determine category name based on file extension."""
+    categories = categories if categories is not None else FILE_CATEGORIES
+    fallback = fallback if fallback is not None else FALLBACK_CATEGORY
     ext = ext.lower()
-    for category, extensions in FILE_CATEGORIES.items():
+    for category, extensions in categories.items():
         if ext in extensions:
             return category
-    return FALLBACK_CATEGORY
+    return fallback
 
 def human_size(num_bytes):
     """Convert bytes to a human-readable string."""
@@ -72,9 +149,13 @@ def save_history(history_data):
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
         json.dump(history_data, f, indent=2)
 
-def organize(target_path, dry_run=False, sort_by="category"):
+def organize(target_path, dry_run=False, sort_by="category", categories=None,
+             ignore_list=None, fallback=None):
     """Main organization logic."""
     target_dir = Path(target_path).resolve()
+    categories = categories if categories is not None else FILE_CATEGORIES
+    ignore_list = ignore_list if ignore_list is not None else IGNORE_LIST
+    fallback = fallback if fallback is not None else FALLBACK_CATEGORY
 
     if not target_dir.exists() or not target_dir.is_dir():
         print(f"{Color.RED}Error: Directory '{target_path}' does not exist!{Color.RESET}")
@@ -83,6 +164,8 @@ def organize(target_path, dry_run=False, sort_by="category"):
     print(f"\n{Color.BOLD}{Color.CYAN}[AutoSort] — Smart File Organizer{Color.RESET}")
     print(f"Target Directory: {Color.YELLOW}{target_dir}{Color.RESET}")
     print(f"Sort Mode      : {sort_by}")
+    if custom_rules_used(categories, ignore_list, fallback):
+        print(f"Config         : {Color.CYAN}custom rules active{Color.RESET}")
     if dry_run:
         print(f"{Color.YELLOW}⚡ DRY RUN MODE ACTIVE (No files will actually be moved){Color.RESET}\n")
 
@@ -94,7 +177,7 @@ def organize(target_path, dry_run=False, sort_by="category"):
 
     for item in target_dir.iterdir():
         # Ignore subdirectories and items in IGNORE_LIST
-        if item.is_dir() or item.name in IGNORE_LIST or item.name.startswith("."):
+        if item.is_dir() or item.name in ignore_list or item.name.startswith("."):
             skipped_count += 1
             continue
 
@@ -102,7 +185,7 @@ def organize(target_path, dry_run=False, sort_by="category"):
             rel_destination = get_date_subfolder(item.stat().st_mtime)
             destination_dir = target_dir / rel_destination
         else:
-            category = get_category_for_extension(item.suffix)
+            category = get_category_for_extension(item.suffix, categories, fallback)
             rel_destination = category
             destination_dir = target_dir / category
 
@@ -215,9 +298,11 @@ def clean_empty(target_path, dry_run=False):
     print(f"\n{Color.GREEN}✓ Removed {removed} empty folder(s).{Color.RESET}")
 
 
-def watch(target_path, dry_run=False, interval=5, sort_by="category"):
+def watch(target_path, dry_run=False, interval=5, sort_by="category",
+          categories=None, ignore_list=None, fallback=None):
     """Watch a folder and auto-organize whenever new files appear."""
     target_dir = Path(target_path).resolve()
+    ignore_filter = ignore_list if ignore_list is not None else IGNORE_LIST
 
     if not target_dir.exists() or not target_dir.is_dir():
         print(f"{Color.RED}Error: Directory '{target_path}' does not exist!{Color.RESET}")
@@ -248,12 +333,13 @@ def watch(target_path, dry_run=False, interval=5, sort_by="category"):
 
         new_files = [
             p for p in new_items
-            if p.is_file() and p.name not in IGNORE_LIST and not p.name.startswith(".")
+            if p.is_file() and p.name not in ignore_filter and not p.name.startswith(".")
         ]
         if new_files:
             names = ", ".join(f.name for f in new_files)
             print(f"{Color.BLUE}[DETECTED]{Color.RESET} {len(new_files)} new file(s): {names}")
-            organize(target_dir, dry_run=dry_run, sort_by=sort_by)
+            organize(target_dir, dry_run=dry_run, sort_by=sort_by,
+                     categories=categories, ignore_list=ignore_list, fallback=fallback)
 
         known = current
 
@@ -301,8 +387,18 @@ def main():
         default="category",
         help="Organize by file category (default) or modification date (YYYY-MM)"
     )
+    parser.add_argument(
+        "--config",
+        metavar="FILE",
+        default=None,
+        help="Path to a JSON config with custom category rules, ignore list, and fallback"
+    )
 
     args = parser.parse_args()
+
+    categories = ignore_list = fallback = None
+    if args.config:
+        categories, ignore_list, fallback = load_custom_config(args.config)
 
     if args.undo:
         undo_last()
@@ -310,11 +406,14 @@ def main():
         clean_empty(args.path, dry_run=args.dry_run)
     elif args.watch:
         try:
-            watch(args.path, dry_run=args.dry_run, interval=args.interval, sort_by=args.sort_by)
+            watch(args.path, dry_run=args.dry_run, interval=args.interval,
+                  sort_by=args.sort_by, categories=categories,
+                  ignore_list=ignore_list, fallback=fallback)
         except KeyboardInterrupt:
             print(f"\n{Color.CYAN}✓ Watch stopped by user.{Color.RESET}")
     else:
-        organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by)
+        organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by,
+                 categories=categories, ignore_list=ignore_list, fallback=fallback)
 
 if __name__ == "__main__":
     main()
