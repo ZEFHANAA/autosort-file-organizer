@@ -18,6 +18,10 @@ from config import FILE_CATEGORIES, IGNORE_LIST, FALLBACK_CATEGORY
 
 HISTORY_FILE = "history.json"
 
+# Marker prefix for the machine-readable report line printed by
+# _organize_impl(); parsed back out by organize(json_output=True).
+REPORT_MARKER = "@@AUTOSORT_REPORT@@"
+
 def load_custom_config(path):
     """Load a user-supplied JSON config with custom categories.
 
@@ -203,12 +207,26 @@ def save_history(history_data):
 
 def organize(target_path, dry_run=False, sort_by="category", categories=None,
              ignore_list=None, fallback=None, recursive=False,
-             exclude_patterns=None, quiet=False):
+             exclude_patterns=None, quiet=False, json_output=False):
     """Main organization logic."""
     # In quiet mode, capture verbose prints and keep only the summary lines.
     import io
     import contextlib
 
+    # JSON mode: same as quiet, but emit a machine-readable summary instead.
+    if json_output:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            result = _organize_impl(target_path, dry_run, sort_by, categories,
+                                    ignore_list, fallback, recursive,
+                                    exclude_patterns)
+        report_line = None
+        for line in buf.getvalue().splitlines():
+            if line.startswith(REPORT_MARKER):
+                report_line = line[len(REPORT_MARKER):]
+        if report_line is not None:
+            print(json.dumps(json.loads(report_line), indent=2))
+        return result
     # Quiet mode: run the implementation with stdout captured and only
     # echo the summary lines back to the real stdout.
     if quiet:
@@ -320,6 +338,26 @@ def _organize_impl(target_path, dry_run=False, sort_by="category", categories=No
         })
         save_history(all_history)
         print(f"\n{Color.CYAN}✓ Session saved to history.json (Use '--undo' to revert){Color.RESET}")
+
+    # Machine-readable report on a single marker line, consumed by
+    # organize(json_output=True). Kept on its own line so it can be
+    # parsed without disturbing the human-readable output.
+    report = {
+        "target_dir": str(target_dir),
+        "sort_by": sort_by,
+        "dry_run": bool(dry_run),
+        "recursive": bool(recursive),
+        "processed": moved_count + skipped_count,
+        "moved": moved_count,
+        "skipped": skipped_count,
+        "total_bytes": total_bytes,
+        "categories": dict(sorted(category_summary.items())),
+        "moves": [
+            {"original": r["original"], "moved_to": r["moved_to"]}
+            for r in history
+        ],
+    }
+    print(f"{REPORT_MARKER}{json.dumps(report)}")
 
 def undo_last():
     """Undo the most recent organization session."""
@@ -526,6 +564,12 @@ def main():
         help="Only print the final summary (no per-file output)"
     )
     parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="json_output",
+        help="Print a machine-readable JSON report instead of the normal output"
+    )
+    parser.add_argument(
         "--config",
         metavar="FILE",
         default=None,
@@ -557,7 +601,8 @@ def main():
         organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by,
                  categories=categories, ignore_list=ignore_list,
                  fallback=fallback, recursive=args.recursive,
-                 exclude_patterns=args.exclude, quiet=args.quiet)
+                 exclude_patterns=args.exclude, quiet=args.quiet,
+                 json_output=args.json_output)
 
 if __name__ == "__main__":
     main()

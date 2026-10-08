@@ -336,5 +336,55 @@ class TestListCategories(AutosortTestCase):
         self.assertIn("Misc", out)
 
 
+# ── json output ─────────────────────────────────────────────────────────────
+
+class TestJsonOutput(AutosortTestCase):
+    def _capture(self, **kwargs):
+        import io as _io
+        import contextlib as _ctx
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf):
+            organize(self.tmp, dry_run=False, json_output=True, **kwargs)
+        # The JSON report is the only thing printed in json mode.
+        return json.loads(buf.getvalue())
+
+    def test_json_report_shape(self):
+        (Path(self.tmp) / "a.pdf").write_text("x")
+        (Path(self.tmp) / "b.png").write_text("yy")
+
+        report = self._capture()
+
+        self.assertEqual(report["moved"], 2)
+        self.assertEqual(report["dry_run"], False)
+        self.assertEqual(report["sort_by"], "category")
+        self.assertEqual(report["categories"], {"Documents": 1, "Images": 1})
+        self.assertEqual(report["total_bytes"], 3)
+        self.assertEqual(len(report["moves"]), 2)
+
+    def test_json_moves_paths(self):
+        (Path(self.tmp) / "a.pdf").write_text("x")
+
+        report = self._capture()
+
+        self.assertEqual(len(report["moves"]), 1)
+        self.assertIn("Documents", report["moves"][0]["moved_to"])
+        self.assertTrue(report["moves"][0]["original"].endswith("a.pdf"))
+
+    def test_json_dry_run_no_moves(self):
+        (Path(self.tmp) / "a.pdf").write_text("x")
+
+        import io as _io
+        import contextlib as _ctx
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf):
+            organize(self.tmp, dry_run=True, json_output=True)
+
+        report = json.loads(buf.getvalue())
+        self.assertEqual(report["moved"], 1)
+        self.assertEqual(report["dry_run"], True)
+        self.assertEqual(report["moves"], [])  # nothing actually moved
+        self.assertTrue((Path(self.tmp) / "a.pdf").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
