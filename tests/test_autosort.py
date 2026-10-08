@@ -214,5 +214,39 @@ class TestLoadCustomConfig(AutosortTestCase):
             load_custom_config(self.tmp + "/bad2.json")
 
 
+# ── recursive ───────────────────────────────────────────────────────────────
+
+class TestRecursive(AutosortTestCase):
+    def test_recursive_moves_nested_files(self):
+        (Path(self.tmp) / "sub").mkdir()
+        (Path(self.tmp) / "sub" / "a.pdf").write_text("x")
+        (Path(self.tmp) / "b.png").write_text("y")
+
+        organize(self.tmp, dry_run=False, recursive=True)
+
+        self.assertTrue((Path(self.tmp) / "Documents" / "a.pdf").exists())
+        self.assertTrue((Path(self.tmp) / "Images" / "b.png").exists())
+        self.assertFalse((Path(self.tmp) / "sub" / "a.pdf").exists())
+
+    def test_recursive_skips_existing_category_dirs(self):
+        (Path(self.tmp) / "Documents").mkdir()
+        (Path(self.tmp) / "Documents" / "a.pdf").write_text("x")
+
+        organize(self.tmp, dry_run=False, recursive=True)
+
+        self.assertEqual(
+            sorted(p.name for p in (Path(self.tmp) / "Documents").iterdir()),
+            ["a.pdf"],
+        )
+
+    def test_default_mode_ignores_subfolders(self):
+        (Path(self.tmp) / "sub").mkdir()
+        (Path(self.tmp) / "sub" / "a.pdf").write_text("x")
+
+        organize(self.tmp, dry_run=False)
+
+        self.assertTrue((Path(self.tmp) / "sub" / "a.pdf").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

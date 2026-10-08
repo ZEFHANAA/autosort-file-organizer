@@ -134,6 +134,48 @@ def get_unique_path(destination_dir, filename):
         counter += 1
     return target_path
 
+def _looks_like_date_folder(name):
+    """True for YYYY-MM folders created by --sort-by date."""
+    return (
+        len(name) == 7 and name[4] == "-"
+        and name[:4].isdigit() and name[5:7].isdigit()
+    )
+
+def iter_target_files(target_dir, ignore_list=None, categories=None,
+                      fallback=None, recursive=False):
+    """Yield the files to organize.
+
+    Default: only files directly inside target_dir.
+    With recursive=True: every file in the tree, except files that already
+    sit inside destination folders (category / YYYY-MM dirs at the top
+    level), so repeated runs do not shuffle files back out of place.
+    """
+    ignore_list = ignore_list if ignore_list is not None else IGNORE_LIST
+    if not recursive:
+        for item in target_dir.iterdir():
+            if item.is_file() and item.name not in ignore_list \
+                    and not item.name.startswith("."):
+                yield item
+        return
+
+    destinations = set(categories if categories is not None else FILE_CATEGORIES)
+    if fallback:
+        destinations.add(fallback)
+    for dirpath, dirnames, filenames in os.walk(target_dir):
+        if Path(dirpath) == target_dir:
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".")
+                and d not in destinations
+                and not _looks_like_date_folder(d)
+            ]
+        else:
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            if name in ignore_list or name.startswith("."):
+                continue
+            yield Path(dirpath) / name
+
 def load_history():
     """Load transaction history for undo functionality."""
     if os.path.exists(HISTORY_FILE):
@@ -150,7 +192,7 @@ def save_history(history_data):
         json.dump(history_data, f, indent=2)
 
 def organize(target_path, dry_run=False, sort_by="category", categories=None,
-             ignore_list=None, fallback=None):
+             ignore_list=None, fallback=None, recursive=False):
     """Main organization logic."""
     target_dir = Path(target_path).resolve()
     categories = categories if categories is not None else FILE_CATEGORIES
@@ -175,12 +217,18 @@ def organize(target_path, dry_run=False, sort_by="category", categories=None,
     category_summary = {}
     total_bytes = 0
 
-    for item in target_dir.iterdir():
-        # Ignore subdirectories and items in IGNORE_LIST
-        if item.is_dir() or item.name in ignore_list or item.name.startswith("."):
-            skipped_count += 1
-            continue
+    if recursive:
+        print(f"{Color.CYAN}Recursive      : yes (subfolders included){Color.RESET}")
 
+    files = list(iter_target_files(target_dir, ignore_list, categories,
+                                   fallback, recursive=recursive))
+    if not recursive:
+        skipped_count = sum(
+            1 for item in target_dir.iterdir()
+            if item.is_dir() or item.name in ignore_list or item.name.startswith(".")
+        )
+
+    for item in files:
         if sort_by == "date":
             rel_destination = get_date_subfolder(item.stat().st_mtime)
             destination_dir = target_dir / rel_destination
@@ -299,7 +347,7 @@ def clean_empty(target_path, dry_run=False):
 
 
 def watch(target_path, dry_run=False, interval=5, sort_by="category",
-          categories=None, ignore_list=None, fallback=None):
+          categories=None, ignore_list=None, fallback=None, recursive=False):
     """Watch a folder and auto-organize whenever new files appear."""
     target_dir = Path(target_path).resolve()
     ignore_filter = ignore_list if ignore_list is not None else IGNORE_LIST
@@ -339,7 +387,8 @@ def watch(target_path, dry_run=False, interval=5, sort_by="category",
             names = ", ".join(f.name for f in new_files)
             print(f"{Color.BLUE}[DETECTED]{Color.RESET} {len(new_files)} new file(s): {names}")
             organize(target_dir, dry_run=dry_run, sort_by=sort_by,
-                     categories=categories, ignore_list=ignore_list, fallback=fallback)
+                     categories=categories, ignore_list=ignore_list,
+                     fallback=fallback, recursive=recursive)
 
         known = current
 
@@ -388,6 +437,11 @@ def main():
         help="Organize by file category (default) or modification date (YYYY-MM)"
     )
     parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Also organize files inside subfolders (category folders are left alone)"
+    )
+    parser.add_argument(
         "--config",
         metavar="FILE",
         default=None,
@@ -408,12 +462,14 @@ def main():
         try:
             watch(args.path, dry_run=args.dry_run, interval=args.interval,
                   sort_by=args.sort_by, categories=categories,
-                  ignore_list=ignore_list, fallback=fallback)
+                  ignore_list=ignore_list, fallback=fallback,
+                  recursive=args.recursive)
         except KeyboardInterrupt:
             print(f"\n{Color.CYAN}✓ Watch stopped by user.{Color.RESET}")
     else:
         organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by,
-                 categories=categories, ignore_list=ignore_list, fallback=fallback)
+                 categories=categories, ignore_list=ignore_list,
+                 fallback=fallback, recursive=args.recursive)
 
 if __name__ == "__main__":
     main()
