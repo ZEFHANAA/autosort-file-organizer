@@ -18,6 +18,7 @@ from organizer import (
     get_category_for_extension,
     get_date_subfolder,
     human_size,
+    list_categories,
     load_custom_config,
     organize,
     undo_last,
@@ -306,6 +307,33 @@ class TestQuiet(AutosortTestCase):
         organize(self.tmp, dry_run=False, quiet=True)
 
         self.assertTrue((Path(self.tmp) / "Documents" / "a.pdf").exists())
+
+
+# ── list_categories ─────────────────────────────────────────────────────────
+
+class TestListCategories(AutosortTestCase):
+    def test_lists_all_default_categories(self):
+        import io as _io
+        import contextlib as _ctx
+        from config import FILE_CATEGORIES
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf):
+            list_categories()
+        out = buf.getvalue()
+        for name in FILE_CATEGORIES:
+            self.assertIn(name, out)
+
+    def test_respects_custom_categories(self):
+        import io as _io
+        import contextlib as _ctx
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf):
+            list_categories(categories={"Only": [".xyz"]}, fallback="Misc",
+                            ignore_list=[])
+        out = buf.getvalue()
+        self.assertIn("Only", out)
+        self.assertIn(".xyz", out)
+        self.assertIn("Misc", out)
 
 
 if __name__ == "__main__":

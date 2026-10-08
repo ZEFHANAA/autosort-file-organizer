@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autosort-cli"
-version = "1.0.0"
+version = "1.1.0"
 description = "Smart file organizer CLI — sort messy folders (Downloads, Desktop) into categories with dry-run preview and undo."
 readme = "README.md"
 license = { text = "MIT" }
