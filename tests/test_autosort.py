@@ -248,5 +248,65 @@ class TestRecursive(AutosortTestCase):
         self.assertTrue((Path(self.tmp) / "sub" / "a.pdf").exists())
 
 
+class TestExclude(AutosortTestCase):
+    def test_exclude_single_pattern(self):
+        (Path(self.tmp) / "a.tmp").write_text("x")
+        (Path(self.tmp) / "b.pdf").write_text("y")
+
+        organize(self.tmp, dry_run=False, exclude_patterns=["*.tmp"])
+
+        self.assertTrue((Path(self.tmp) / "a.tmp").exists())
+        self.assertTrue((Path(self.tmp) / "Documents" / "b.pdf").exists())
+
+    def test_exclude_multiple_patterns(self):
+        (Path(self.tmp) / "a.tmp").write_text("x")
+        (Path(self.tmp) / "draft_v1.txt").write_text("y")
+        (Path(self.tmp) / "c.png").write_text("z")
+
+        organize(self.tmp, dry_run=False, exclude_patterns=["*.tmp", "draft_*"])
+
+        self.assertTrue((Path(self.tmp) / "a.tmp").exists())
+        self.assertTrue((Path(self.tmp) / "draft_v1.txt").exists())
+        self.assertTrue((Path(self.tmp) / "Images" / "c.png").exists())
+
+    def test_exclude_works_recursive(self):
+        (Path(self.tmp) / "sub").mkdir()
+        (Path(self.tmp) / "sub" / "a.tmp").write_text("x")
+        (Path(self.tmp) / "sub" / "b.pdf").write_text("y")
+
+        organize(self.tmp, dry_run=False, recursive=True,
+                 exclude_patterns=["*.tmp"])
+
+        self.assertTrue((Path(self.tmp) / "sub" / "a.tmp").exists())
+        self.assertTrue((Path(self.tmp) / "Documents" / "b.pdf").exists())
+
+
+# ── quiet ───────────────────────────────────────────────────────────────────
+
+class TestQuiet(AutosortTestCase):
+    def test_quiet_hides_per_file_output(self):
+        (Path(self.tmp) / "a.pdf").write_text("x")
+        (Path(self.tmp) / "b.png").write_text("y")
+
+        import io as _io
+        import contextlib as _ctx
+        buf = _io.StringIO()
+        with _ctx.redirect_stdout(buf):
+            organize(self.tmp, dry_run=False, quiet=True)
+
+        out = buf.getvalue()
+        self.assertNotIn("[MOVED]", out)
+        self.assertNotIn("Target Directory", out)
+        self.assertIn("Total Moved", out)
+        self.assertIn("2", out)
+
+    def test_quiet_still_moves_files(self):
+        (Path(self.tmp) / "a.pdf").write_text("x")
+
+        organize(self.tmp, dry_run=False, quiet=True)
+
+        self.assertTrue((Path(self.tmp) / "Documents" / "a.pdf").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
