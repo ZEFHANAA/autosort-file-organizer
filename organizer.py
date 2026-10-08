@@ -432,6 +432,28 @@ def watch(target_path, dry_run=False, interval=5, sort_by="category",
         known = current
 
 
+VERSION = "1.1.0"
+
+
+def list_categories(categories=None, fallback=None, ignore_list=None):
+    """Print the active category -> extension mapping and exit."""
+    categories = categories if categories is not None else FILE_CATEGORIES
+    fallback = fallback if fallback is not None else FALLBACK_CATEGORY
+    ignore_list = ignore_list if ignore_list is not None else IGNORE_LIST
+
+    print(f"\n{Color.BOLD}{Color.CYAN}[AutoSort] — Active Categories{Color.RESET}\n")
+    total = 0
+    for name in sorted(categories):
+        exts = categories[name]
+        total += len(exts)
+        joined = " ".join(exts) if exts else "(none)"
+        print(f"  {Color.GREEN}{name:<18}{Color.RESET} {joined}")
+    print(f"\n  {Color.YELLOW}{fallback:<18}{Color.RESET} (fallback for unknown extensions)")
+    if ignore_list:
+        print(f"\n{Color.BOLD}Ignored names:{Color.RESET} {', '.join(ignore_list)}")
+    print(f"\n{Color.CYAN}{len(categories)} categories, {total} extensions.{Color.RESET}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AutoSort — Smart File Organizer for Downloads & Messy Folders"
@@ -481,6 +503,17 @@ def main():
         help="Also organize files inside subfolders (category folders are left alone)"
     )
     parser.add_argument(
+        "--list-categories",
+        action="store_true",
+        help="Print the active category -> extension mapping and exit"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"AutoSort {VERSION}",
+        help="Show the program version and exit"
+    )
+    parser.add_argument(
         "--exclude",
         action="append",
         default=[],
@@ -509,6 +542,8 @@ def main():
         undo_last()
     elif args.clean_empty:
         clean_empty(args.path, dry_run=args.dry_run)
+    elif args.list_categories:
+        list_categories(categories, fallback, ignore_list)
     elif args.watch:
         try:
             watch(args.path, dry_run=args.dry_run, interval=args.interval,
