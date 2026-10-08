@@ -142,19 +142,29 @@ def _looks_like_date_folder(name):
     )
 
 def iter_target_files(target_dir, ignore_list=None, categories=None,
-                      fallback=None, recursive=False):
+                      fallback=None, recursive=False, exclude_patterns=None):
     """Yield the files to organize.
 
     Default: only files directly inside target_dir.
     With recursive=True: every file in the tree, except files that already
     sit inside destination folders (category / YYYY-MM dirs at the top
     level), so repeated runs do not shuffle files back out of place.
+
+    exclude_patterns: fnmatch-style patterns matched against file names
+    (e.g. "*.tmp", "report_*.pdf"). Matching files are skipped.
     """
+    import fnmatch
     ignore_list = ignore_list if ignore_list is not None else IGNORE_LIST
+    exclude_patterns = list(exclude_patterns or [])
+
+    def _excluded(name):
+        return any(fnmatch.fnmatch(name, p) for p in exclude_patterns)
+
     if not recursive:
         for item in target_dir.iterdir():
             if item.is_file() and item.name not in ignore_list \
-                    and not item.name.startswith("."):
+                    and not item.name.startswith(".") \
+                    and not _excluded(item.name):
                 yield item
         return
 
@@ -172,7 +182,7 @@ def iter_target_files(target_dir, ignore_list=None, categories=None,
         else:
             dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in filenames:
-            if name in ignore_list or name.startswith("."):
+            if name in ignore_list or name.startswith(".") or _excluded(name):
                 continue
             yield Path(dirpath) / name
 
@@ -192,8 +202,34 @@ def save_history(history_data):
         json.dump(history_data, f, indent=2)
 
 def organize(target_path, dry_run=False, sort_by="category", categories=None,
-             ignore_list=None, fallback=None, recursive=False):
+             ignore_list=None, fallback=None, recursive=False,
+             exclude_patterns=None, quiet=False):
     """Main organization logic."""
+    # In quiet mode, capture verbose prints and keep only the summary lines.
+    import io
+    import contextlib
+
+    # Quiet mode: run the implementation with stdout captured and only
+    # echo the summary lines back to the real stdout.
+    if quiet:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            result = _organize_impl(target_path, dry_run, sort_by, categories,
+                                    ignore_list, fallback, recursive,
+                                    exclude_patterns)
+        for line in buf.getvalue().splitlines():
+            if ("SUMMARY" in line or "Total" in line or "Category Breakdown" in line
+                    or line.lstrip().startswith("*") or "Session saved" in line):
+                print(line)
+        return result
+    return _organize_impl(target_path, dry_run, sort_by, categories,
+                          ignore_list, fallback, recursive, exclude_patterns)
+
+
+def _organize_impl(target_path, dry_run=False, sort_by="category", categories=None,
+                   ignore_list=None, fallback=None, recursive=False,
+                   exclude_patterns=None):
+    """Implementation of organize(); see organize() for public signature."""
     target_dir = Path(target_path).resolve()
     categories = categories if categories is not None else FILE_CATEGORIES
     ignore_list = ignore_list if ignore_list is not None else IGNORE_LIST
@@ -221,7 +257,8 @@ def organize(target_path, dry_run=False, sort_by="category", categories=None,
         print(f"{Color.CYAN}Recursive      : yes (subfolders included){Color.RESET}")
 
     files = list(iter_target_files(target_dir, ignore_list, categories,
-                                   fallback, recursive=recursive))
+                                   fallback, recursive=recursive,
+                                   exclude_patterns=exclude_patterns))
     if not recursive:
         skipped_count = sum(
             1 for item in target_dir.iterdir()
@@ -347,7 +384,8 @@ def clean_empty(target_path, dry_run=False):
 
 
 def watch(target_path, dry_run=False, interval=5, sort_by="category",
-          categories=None, ignore_list=None, fallback=None, recursive=False):
+          categories=None, ignore_list=None, fallback=None, recursive=False,
+          exclude_patterns=None, quiet=False):
     """Watch a folder and auto-organize whenever new files appear."""
     target_dir = Path(target_path).resolve()
     ignore_filter = ignore_list if ignore_list is not None else IGNORE_LIST
@@ -388,7 +426,8 @@ def watch(target_path, dry_run=False, interval=5, sort_by="category",
             print(f"{Color.BLUE}[DETECTED]{Color.RESET} {len(new_files)} new file(s): {names}")
             organize(target_dir, dry_run=dry_run, sort_by=sort_by,
                      categories=categories, ignore_list=ignore_list,
-                     fallback=fallback, recursive=recursive)
+                     fallback=fallback, recursive=recursive,
+                     exclude_patterns=exclude_patterns, quiet=quiet)
 
         known = current
 
@@ -442,6 +481,18 @@ def main():
         help="Also organize files inside subfolders (category folders are left alone)"
     )
     parser.add_argument(
+        "--exclude",
+        action="append",
+        default=[],
+        metavar="PATTERN",
+        help="Skip files matching a glob pattern, e.g. --exclude '*.tmp' (repeatable)"
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only print the final summary (no per-file output)"
+    )
+    parser.add_argument(
         "--config",
         metavar="FILE",
         default=None,
@@ -463,13 +514,15 @@ def main():
             watch(args.path, dry_run=args.dry_run, interval=args.interval,
                   sort_by=args.sort_by, categories=categories,
                   ignore_list=ignore_list, fallback=fallback,
-                  recursive=args.recursive)
+                  recursive=args.recursive, exclude_patterns=args.exclude,
+                  quiet=args.quiet)
         except KeyboardInterrupt:
             print(f"\n{Color.CYAN}✓ Watch stopped by user.{Color.RESET}")
     else:
         organize(args.path, dry_run=args.dry_run, sort_by=args.sort_by,
                  categories=categories, ignore_list=ignore_list,
-                 fallback=fallback, recursive=args.recursive)
+                 fallback=fallback, recursive=args.recursive,
+                 exclude_patterns=args.exclude, quiet=args.quiet)
 
 if __name__ == "__main__":
     main()
